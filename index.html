@@ -80,7 +80,6 @@
     </div>
     <div class="topbar-center">
       <span class="room-pill"><span id="table-dot" class="dot"></span><span id="table-code">·····</span></span>
-      <span id="shoe-pill" class="shoe-pill" title="Cards left in the shoe"></span>
     </div>
     <div class="topbar-right">
       <button id="btn-leave" class="btn ghost small">Leave table</button>
@@ -94,23 +93,24 @@
         <div class="dealer-zone">
           <div class="dealer-label">Dealer</div>
           <div id="dealer-hand" class="hand dealer-hand"></div>
-          <div id="dealer-value" class="hand-value"></div>
+          <div id="dealer-value" class="dealer-value"></div>
         </div>
 
-        <svg class="arcs" viewBox="0 0 1000 250" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+        <svg class="arcs" viewBox="0 0 1000 200" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
           <defs>
-            <path id="arcA" d="M 250 14 Q 500 150 750 14"></path>
-            <path id="arcB" d="M 130 30 Q 500 260 870 30"></path>
-            <path id="arcC" d="M 40 62 Q 500 350 960 62"></path>
+            <path id="arcA" d="M 200 10 Q 500 120 800 10"></path>
+            <path id="arcB" d="M 90 26 Q 500 204 910 26"></path>
+            <path id="arcC" d="M 10 56 Q 500 286 990 56"></path>
           </defs>
           <text class="arc-a"><textPath href="#arcA" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
-          <use href="#arcB" class="band"></use>
           <use href="#arcB" class="band-edge"></use>
+          <use href="#arcB" class="band"></use>
           <text class="arc-b"><textPath href="#arcB" startOffset="50%" text-anchor="middle">INSURANCE PAYS 2 TO 1</textPath></text>
-          <text class="arc-c"><textPath href="#arcC" startOffset="50%" text-anchor="middle">DEALER MUST STAND ON ALL 17s   ·   DEALER BUST PAYS 2 TO 1 ON 3 CARDS · 3 TO 1 ON 4 OR MORE</textPath></text>
+          <text class="arc-c"><textPath href="#arcC" startOffset="50%" text-anchor="middle">DEALER STANDS ON ALL 17s  ·  DEALER BUST PAYS 2 TO 1 ON 3 CARDS  ·  3 TO 1 ON 4+</textPath></text>
         </svg>
 
         <div id="seats" class="seats"></div>
+        <div id="felt-actions" class="felt-actions"></div>
       </div>
     </div>
 

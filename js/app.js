@@ -7,7 +7,7 @@
   const NEXT_ROUND_MS = 8000;
   // Animation timing: cards go out one at a time in casino order, the hole card flips,
   // dealer draws follow, then results pop.
-  const DEAL_STEP = 170, DRAW_STEP = 420, FLIP_MS = 450;
+  const DEAL_STEP = 260, DRAW_STEP = 650, FLIP_MS = 650;
 
   const app = {
     role: null, name: '', myId: null, code: '',
@@ -280,7 +280,7 @@
 
     // --- timing plan for this render ---
     const dealNew = n > 0 && isNew(`${s.round}:deal`);
-    const dealBase = dealNew ? (2 * n + 2) * DEAL_STEP + 120 : 0;
+    const dealBase = dealNew ? (2 * n + 2) * DEAL_STEP + 260 : 0;
     const flipNew = !s.dealer.holeHidden && s.dealer.cards.length >= 2 && isNew(`${s.round}:D:flip`);
     const flipAt = dealBase;
     const drawsStart = flipAt + (flipNew ? FLIP_MS : 0);
@@ -300,8 +300,7 @@
       if (delay) app.pnlTimer = setTimeout(apply, delay); else apply();
       $('bank-sub').textContent = `Buy-in ${money(meP.start)}${meP.status === 'spectating' ? ' · watching' : ''}`;
     }
-    const sh = s.shoe;
-    $('shoe-pill').innerHTML = `Shoe <span class="bar"><i style="width:${Math.round((sh.remaining / sh.total) * 100)}%"></i></span> ${sh.remaining} cards`;
+    $('shoe-box').title = `${s.shoe.remaining} cards left in the shoe`;
 
     // dealer
     const dh = $('dealer-hand');
@@ -315,13 +314,12 @@
     }).join('');
     if (flipNew) { const second = dh.children[1]; if (second) { second.classList.remove('deal'); second.classList.add('flip-in'); second.dataset.aimed = '1'; second.style.setProperty('--delay', flipAt + 'ms'); } }
     let dv = '';
-    if (s.dealer.cards.length) {
+    if (s.dealer.cards.length && !s.dealer.holeHidden) {
       const v = s.dealer.value;
-      const bj = !s.dealer.holeHidden && BJ.isNatural(s.dealer.cards);
-      const text = v.bust ? 'Dealer busts' : bj ? 'Blackjack' : (s.dealer.holeHidden ? 'Showing ' : '') + v.total + (v.soft && v.total < 21 && !s.dealer.holeHidden ? ' soft' : '');
+      const bj = BJ.isNatural(s.dealer.cards);
+      const text = v.bust ? 'Bust' : bj ? 'Blackjack' : String(v.total);
       const fresh = isNew(`${s.round}:D:v:${text}`);
-      const delay = s.dealer.holeHidden ? (n + 1) * DEAL_STEP : settleAt;
-      dv = `<span class="hand-value ${v.bust ? 'bust' : bj ? 'bj' : ''}${fresh ? ' anim' : ''}"${fresh ? ` style="--tag-delay:${delay}ms"` : ''}>${text}</span>`;
+      dv = `<span class="hand-value ${v.bust ? 'bust' : bj ? 'bj' : ''}${fresh ? ' anim' : ''}"${fresh ? ` style="--tag-delay:${settleAt}ms"` : ''}>${text}</span>`;
     }
     $('dealer-value').innerHTML = dv;
 
@@ -338,6 +336,7 @@
     $('spectators').innerHTML = specs.length ? `<b>Watching:</b> ${specs.map((p) => esc(p.name)).join(', ')}` : '';
 
     app.barDelay = s.phase === 'settled' && isNew(`${s.round}:settle-bar`) ? settleAt : (dealNew ? dealBase : 0);
+    renderFeltActions(s, meP);
     renderActions(s, meP);
     renderOverlay(s, meP);
 
@@ -410,16 +409,19 @@
       for (const [bid, amt] of Object.entries(p.bets.behind)) tags.push(`<span class="behind-tag">${stack(amt)}<span>on ${esc(nameOf(bid, s))}</span></span>`);
     }
 
-    const showNet = s.phase === 'settled' && typeof p.lastNet === 'number' && (p.hands.length || !p.sitOut);
+    const showNet = !mine && s.phase === 'settled' && typeof p.lastNet === 'number' && (p.hands.length || !p.sitOut);
     const net = showNet ? `<b class="net ${cls(p.lastNet)}${anim('net')}" style="--tag-delay:${t.settleAt}ms">${signed(p.lastNet)}</b>` : '';
+    const total = pendingTotal();
+    const dealBtn = betting && mine ? `<button class="btn gold deal-btn${isNew(`${s.round}:dealbtn`) ? ' anim' : ''}" data-act="lock" ${total > 0 ? '' : 'disabled'}>${total > 0 ? 'Deal · ' + money(total) : 'Place a bet'}</button>` : '';
     return `<div class="seat${mine ? ' me' : ''}${isTurn ? ' turn' : ''}${p.status === 'left' || !p.connected ? ' away' : ''}${anim('seat')}">
       ${hands}
       <div class="spots">${mainSpot}${bustSpot}</div>
       <div class="tags">${tags.join('')}</div>
       <div class="plate">
         <div class="name">${esc(p.name)}${mine ? '<span class="you">YOU</span>' : ''}</div>
-        <div class="money"><span>${money(p.bank)}</span><b class="${cls(pnl)}">${signed(pnl)}</b>${net}</div>
+        <div class="money"><span>${money(p.bank)}</span>${mine ? '' : `<b class="${cls(pnl)}">${signed(pnl)}</b>`}${net}</div>
       </div>
+      ${dealBtn}
     </div>`;
   }
   function nameOf(pid, s) { const p = s.players.find((x) => x.id === pid); return p ? p.name : '?'; }
@@ -436,7 +438,7 @@
     if (!meP) { setBar('<span class="note">Connecting…</span>'); return; }
     if (meP.status === 'spectating') {
       const seats = s.players.filter((p) => p.status === 'seated').length;
-      setBar(`<span class="note">You're watching.</span>${meP.bank > 0 && seats < BJ.MAX_SEATS ? '<button class="btn gold big" data-act="sit">Take a seat</button>' : ''}`);
+      setBar(`<span class="note">You're watching.${meP.bank > 0 && seats < BJ.MAX_SEATS ? ' Tap SIT on the table to play.' : ''}</span>`);
       return;
     }
     if (meP.status === 'broke') { setBar('<span class="note">Out of chips.</span>'); return; }
@@ -455,8 +457,7 @@
       case 'insurance': {
         if (meP.hands.length && meP.insurance === null) {
           const amt = Math.floor(meP.hands[0].bet / 2);
-          setBar(`<span class="note">Dealer shows an Ace. Insurance costs <b>${money(amt)}</b> and pays 2 to 1.</span>
-            <div class="act-row"><button class="btn act gold" data-act="ins-yes" ${meP.bank < amt || amt <= 0 ? 'disabled' : ''}>Take insurance</button><button class="btn act" data-act="ins-no">No insurance</button></div>`);
+          setBar(`<span class="note">Dealer shows an Ace. Insurance costs <b>${money(amt)}</b> and pays 2 to 1.</span>`);
         } else {
           const waiting = s.players.filter((p) => p.hands.length && p.insurance === null).map((p) => p.name);
           setBar(`<span class="note">Waiting for <b>${esc(waiting.join(', '))}</b> to decide on insurance…</span>`);
@@ -469,13 +470,8 @@
           const canDouble = h.cards.length === 2 && !h.doubled && !h.fromAces && meP.bank >= h.bet;
           const canSplit = h.cards.length === 2 && meP.hands.length < BJ.MAX_HANDS && !h.fromAces && meP.bank >= h.bet &&
             (h.cards[0].r === h.cards[1].r || (BJ.cardValue(h.cards[0].r) === 10 && BJ.cardValue(h.cards[1].r) === 10));
-          setBar(`<span class="note">${meP.hands.length > 1 ? `Hand ${s.turn.hand + 1} of ${meP.hands.length} · ` : ''}Your move</span>
-            <div class="act-row play">
-              <button class="btn act hit" data-act="hit"><span>Hit</span><kbd>H</kbd></button>
-              <button class="btn act stand" data-act="stand"><span>Stand</span><kbd>S</kbd></button>
-              <button class="btn act double" data-act="double" ${canDouble ? '' : 'disabled'}><span>Double</span><kbd>D</kbd></button>
-              <button class="btn act split" data-act="split" ${canSplit ? '' : 'disabled'}><span>Split</span><kbd>P</kbd></button>
-            </div>`);
+          void canDouble; void canSplit;
+          setBar(`<span class="note">${meP.hands.length > 1 ? `Hand ${s.turn.hand + 1} of ${meP.hands.length} · ` : ''}Your move <small>H · S · D · P</small></span>`);
         } else {
           const who = s.turn ? nameOf(s.turn.pid, s) : '…';
           setBar(`<span class="note"><b>${esc(who)}</b> is playing…</span>`);
@@ -487,11 +483,42 @@
         const left = Math.max(0, Math.ceil((NEXT_ROUND_MS - (Date.now() - (s.settledAt || Date.now()))) / 1000));
         const net = typeof meP.lastNet === 'number' && !(meP.sitOut && !meP.bets.bust && !Object.keys(meP.bets.behind).length) ? meP.lastNet : null;
         const banner = net === null ? '<span class="note">Hand over.</span>' : `<span class="result-banner ${cls(net)}">${net > 0 ? 'You won ' : net < 0 ? 'You lost ' : 'Push · '}${money(net)}</span>`;
-        setBar(`${banner}<span class="countdown">Next hand in ${left}s</span>${isHost ? '<button class="btn" data-act="next">Next hand now</button>' : ''}`);
+        setBar(`${banner}<span class="countdown">Next hand in ${left}s</span>`);
+        void isHost;
         return;
       }
       default: setBar('');
     }
+  }
+
+  // Round buttons at the bottom of the felt: play actions, insurance, next hand, take a seat.
+  function renderFeltActions(s, meP) {
+    const el = $('felt-actions');
+    let html = '';
+    if (meP && meP.status === 'spectating') {
+      const seats = s.players.filter((p) => p.status === 'seated').length;
+      if (meP.bank > 0 && seats < BJ.MAX_SEATS) html = '<button class="rbtn gold" data-act="sit">SIT</button>';
+    } else if (meP && meP.status === 'seated') {
+      if (s.phase === 'insurance' && meP.hands.length && meP.insurance === null) {
+        const amt = Math.floor(meP.hands[0].bet / 2);
+        html = `<button class="rbtn gold" data-act="ins-yes" ${meP.bank < amt || amt <= 0 ? 'disabled' : ''}>INSURE<small>${money(amt)}</small></button><button class="rbtn red" data-act="ins-no">NO</button>`;
+      } else if (s.phase === 'playing' && s.turn && s.turn.pid === meP.id) {
+        const h = meP.hands[s.turn.hand];
+        const canDouble = h.cards.length === 2 && !h.doubled && !h.fromAces && meP.bank >= h.bet;
+        const canSplit = h.cards.length === 2 && meP.hands.length < BJ.MAX_HANDS && !h.fromAces && meP.bank >= h.bet &&
+          (h.cards[0].r === h.cards[1].r || (BJ.cardValue(h.cards[0].r) === 10 && BJ.cardValue(h.cards[1].r) === 10));
+        html = `<button class="rbtn gold" data-act="hit">HIT</button>
+          <button class="rbtn red" data-act="stand">STAND</button>
+          <button class="rbtn blue" data-act="double" ${canDouble ? '' : 'disabled'}>2×</button>
+          <button class="rbtn purple" data-act="split" ${canSplit ? '' : 'disabled'}>SPLIT</button>`;
+      } else if (s.phase === 'settled' && app.role === 'host') {
+        html = '<button class="rbtn gold small" data-act="next">NEXT</button>';
+      }
+    }
+    if (el.dataset.html === html) return;
+    el.style.setProperty('--bar-delay', (app.barDelay || 0) + 'ms');
+    el.innerHTML = html; el.dataset.html = html;
+    el.classList.toggle('empty', !html);
   }
 
   function pendingTotal() { return app.pending.main + app.pending.bust + sum(app.pending.behind); }
@@ -509,17 +536,15 @@
         ${CHIPS.map((c) => `<button class="chip pick ${chipClass(c)}${c === app.chipSel ? ' sel' : ''}" data-chip="${c}" ${c > left ? 'disabled' : ''} role="radio" aria-checked="${c === app.chipSel}" aria-label="${c} chip">${chipLabel(c)}</button>`).join('')}
       </div>
       <div class="tools">
-        <button class="btn tool" data-act="undo" ${app.undo.length ? '' : 'disabled'}>Undo</button>
-        <button class="btn tool" data-act="clear" ${total ? '' : 'disabled'}>Clear</button>
-        <button class="btn tool" data-act="repeat" ${canRepeat ? '' : 'disabled'} title="Place the same bets as last hand">Repeat</button>
-        <button class="btn tool" data-act="double-bet" ${canDouble ? '' : 'disabled'} title="Double every bet on the table">2×</button>
-        <button class="btn tool" data-act="allin" ${left > 0 ? '' : 'disabled'}>All in</button>
+        <button class="tool-btn" data-act="undo" ${app.undo.length ? '' : 'disabled'} title="Take back the last chip"><span class="ico">↶</span><span class="lbl">Undo</span></button>
+        <button class="tool-btn" data-act="clear" ${total ? '' : 'disabled'} title="Clear all bets"><span class="ico">✕</span><span class="lbl">Clear</span></button>
+        <button class="tool-btn" data-act="repeat" ${canRepeat ? '' : 'disabled'} title="Same bets as last hand"><span class="ico">↻</span><span class="lbl">Rebet</span></button>
+        <button class="tool-btn" data-act="double-bet" ${canDouble ? '' : 'disabled'} title="Double every bet"><span class="ico">2×</span><span class="lbl">Double</span></button>
+        <button class="tool-btn" data-act="allin" ${left > 0 ? '' : 'disabled'} title="Everything on the main bet"><span class="ico">MAX</span><span class="lbl">All in</span></button>
+        <button class="tool-btn quiet" data-act="sitout" title="Skip this hand"><span class="ico">—</span><span class="lbl">Sit out</span></button>
+        ${app.role === 'host' && s.players.some((p) => p.status === 'seated' && p.locked) ? '<button class="tool-btn quiet" data-act="forceDeal" title="Deal now, stragglers sit out"><span class="ico">▶</span><span class="lbl">Deal now</span></button>' : ''}
       </div>
-      <div class="lock-col">
-        <button class="btn gold big" data-act="lock" ${total > 0 ? '' : 'disabled'}>${total > 0 ? 'Deal · ' + money(total) : 'Place a bet'}</button>
-        <div class="lock-row"><button class="btn tool" data-act="sitout">Sit out</button>${app.role === 'host' && s.players.some((p) => p.status === 'seated' && p.locked) ? '<button class="btn tool" data-act="forceDeal">Deal now</button>' : ''}</div>
-      </div>
-      <div class="hint">${total ? 'Tap a circle to add more chips, undo to take one back, then deal.' : 'Pick a chip, then tap your BET circle. Tap DEALER BUST for the side bet, or a friend’s circle to bet behind them.'}</div>
+      <div class="hint">${total ? 'Tap a circle to add more chips, then press Deal under your seat.' : 'Pick a chip, then tap your BET circle. Tap DEALER BUST for the side bet, or a friend’s circle to bet behind them.'}</div>
     </div>`;
   }
   function placeChip(spot, n) {
