@@ -28,7 +28,7 @@
   --shadow: 0 18px 44px rgba(0,0,0,.6);
   --card-w: 66px;
   --card-h: 94px;
-  --deal-ms: 820ms;
+  --deal-ms: 1100ms;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -389,7 +389,7 @@ input[type=text]::placeholder { color: #4f6a5c; }
   12% { opacity: 1; }
   100% { transform: none; opacity: 1; }
 }
-.card.flip-in { animation: flip .7s ease both; animation-delay: var(--delay, 0ms); }
+.card.flip-in { animation: flip .9s ease both; animation-delay: var(--delay, 0ms); }
 @keyframes flip { 0% { transform: rotateY(90deg) scale(1.05); } 100% { transform: none; } }
 
 /* ===== chips ===== */

@@ -7,7 +7,7 @@
   const NEXT_ROUND_MS = 8000;
   // Animation timing: cards go out one at a time in casino order, the hole card flips,
   // dealer draws follow, then results pop.
-  const DEAL_STEP = 420, DRAW_STEP = 900, FLIP_MS = 800;
+  const DEAL_STEP = 650, DRAW_STEP = 1200, FLIP_MS = 1000;
 
   const app = {
     role: null, name: '', myId: null, code: '',
@@ -280,7 +280,7 @@
 
     // --- timing plan for this render ---
     const dealNew = n > 0 && isNew(`${s.round}:deal`);
-    const dealBase = dealNew ? (2 * n + 2) * DEAL_STEP + 420 : 0;
+    const dealBase = dealNew ? (2 * n + 2) * DEAL_STEP + 600 : 0;
     const flipNew = !s.dealer.holeHidden && s.dealer.cards.length >= 2 && isNew(`${s.round}:D:flip`);
     const flipAt = dealBase;
     const drawsStart = flipAt + (flipNew ? FLIP_MS : 0);
