@@ -304,6 +304,7 @@
 
     // dealer
     const dh = $('dealer-hand');
+    dh.classList.toggle('many', s.dealer.cards.length > 4);
     dh.innerHTML = s.dealer.cards.map((c, i) => {
       const key = `${s.round}:D:${i}:${c.hidden ? 'h' : 'v'}`;
       let delay = 0;
@@ -369,7 +370,7 @@
         const tagDelay = s.phase === 'settled' ? t.settleAt : (h.cards.length <= 2 && !h.split ? t.dealBase : 0);
         const behind = Object.entries(h.behind || {});
         return `<div class="hand-box${turnHand ? ' turn' : ''}">
-          <div class="hand">${cards}</div>
+          <div class="hand${h.cards.length > 3 ? ' many' : ''}">${cards}</div>
           ${valueTag(h.value, h, s.phase, `${s.round}:v:${p.id}:${hi}`, tagDelay)}
           ${p.hands.length > 1 ? `<div class="hand-bet${anim('hb' + hi)}">${stack(h.bet)}${behind.map(([bid, amt]) => `<span class="behind-tag">${stack(amt)}<span>${esc(nameOf(bid, s))}</span></span>`).join('')}</div>` : ''}
         </div>`;
@@ -512,7 +513,7 @@
           <button class="rbtn blue" data-act="double" ${canDouble ? '' : 'disabled'}>2×</button>
           <button class="rbtn purple" data-act="split" ${canSplit ? '' : 'disabled'}>SPLIT</button>`;
       } else if (s.phase === 'settled' && app.role === 'host') {
-        html = '<button class="rbtn gold small" data-act="next">NEXT</button>';
+        html = '<button class="rbtn gold next" data-act="next">NEXT</button>';
       }
     }
     if (el.dataset.html === html) return;
