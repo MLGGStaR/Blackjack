@@ -5,13 +5,16 @@
   const HOST_ID = 'host';
   const CHIPS = [1, 5, 25, 100, 500, 1000, 5000];
   const NEXT_ROUND_MS = 8000;
+  // Animation timing: cards go out one at a time in casino order, the hole card flips,
+  // dealer draws follow, then results pop.
+  const DEAL_STEP = 170, DRAW_STEP = 420, FLIP_MS = 450;
 
   const app = {
     role: null, name: '', myId: null, code: '',
     game: null, host: null, guest: null, state: null,
     status: { level: 'offline', text: '' },
-    pending: { main: 0, bust: 0, behind: {} }, slot: 'main', behindTarget: null, undo: [],
-    seen: new Set(), nextTimer: null, tick: null, lastRound: 0,
+    pending: { main: 0, bust: 0, behind: {} }, chipSel: 25, undo: [], lastBets: null,
+    seen: new Set(), nextTimer: null, tick: null, lastRound: 0, pnlShown: null, bankShown: null,
   };
   window.app = app; // for debugging
 
@@ -19,6 +22,7 @@
   const signed = (n) => (n > 0 ? '+' : n < 0 ? '−' : '') + money(n);
   const cls = (n) => (n > 0 ? 'up' : n < 0 ? 'down' : 'flat');
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
 
   function show(screen) {
     for (const id of ['screen-home', 'screen-lobby', 'screen-table']) $(id).hidden = id !== 'screen-' + screen;
@@ -102,11 +106,7 @@
         setStatus('online', 'Connected to ' + code);
         $('btn-join').disabled = false; $('btn-join').textContent = 'Join friends';
       },
-      onState(state) {
-        app.state = state;
-        if (state.hostId) { /* keep */ }
-        render();
-      },
+      onState(state) { app.state = state; render(); },
       onKicked(reason) { goHome(reason === 'left' ? '' : 'The host closed the table.'); },
       onError(msg) { $('btn-join').disabled = false; $('btn-join').textContent = 'Join friends'; $('home-error').textContent = msg; $('home-error').hidden = false; app.guest = null; },
       onClosed() { if (app.role === 'guest') goHome('Connection to the table was lost.'); },
@@ -123,7 +123,7 @@
     if (app.host) { app.host.broadcast({ type: 'kicked', reason: 'closed' }); app.host.destroy(); }
     if (app.guest) app.guest.destroy();
     clearTimeout(app.nextTimer); clearInterval(app.tick);
-    Object.assign(app, { role: null, myId: null, game: null, host: null, guest: null, state: null, nextTimer: null, tick: null, seen: new Set(), pending: { main: 0, bust: 0, behind: {} }, undo: [], slot: 'main', behindTarget: null });
+    Object.assign(app, { role: null, myId: null, game: null, host: null, guest: null, state: null, nextTimer: null, tick: null, seen: new Set(), pending: { main: 0, bust: 0, behind: {} }, undo: [], lastBets: null, pnlShown: null, bankShown: null });
     show('home');
     if (message) { $('home-error').textContent = message; $('home-error').hidden = false; }
   }
@@ -150,7 +150,6 @@
   }
   function renderLobby(s) {
     const isHost = app.role === 'host';
-    const meP = me();
     const root = $('lobby-players');
     const html = s.players.map((p) => {
       const mine = p.id === app.myId;
@@ -160,13 +159,16 @@
         : `<div class="amount">${money(p.bank)}</div>`;
       return `<div class="lobby-player${mine ? ' me' : ''}" data-id="${p.id}">${who}${right}</div>`;
     }).join('');
-    if (root.dataset.html !== html) { root.innerHTML = html; root.dataset.html = html; }
+    if (root.dataset.html !== html) {
+      // keep the input's value if the user is typing
+      const focused = document.activeElement && document.activeElement.id === 'bank-input' ? document.activeElement.value : null;
+      root.innerHTML = html; root.dataset.html = html;
+      if (focused !== null) { const i = $('bank-input'); if (i) { i.value = focused; i.focus(); } }
+    }
     $('btn-start').hidden = !isHost;
     $('btn-start').disabled = !s.players.some((p) => p.status === 'seated');
     $('lobby-wait').hidden = isHost;
-    void meP;
   }
-  // stepper handlers (delegated, with press-and-hold)
   (function bindStepper() {
     const root = $('lobby-players');
     let holdTimer = null, repeat = null;
@@ -193,18 +195,25 @@
     });
   })();
 
-  // ----- table -----
-  function cardHTML(c, key) {
-    if (!c || c.hidden) return `<div class="card back${isNew(key) ? ' deal' : ''}"></div>`;
-    const fresh = isNew(key);
-    return `<div class="card${fresh ? ' deal' : ''}" data-suit="${c.s}"><span class="corner">${c.r}<i>${c.s}</i></span><span class="pip">${c.s}</span><span class="corner flip">${c.r}<i>${c.s}</i></span></div>`;
-  }
+  // ----- table pieces -----
   function isNew(key) {
     if (!key) return false;
     if (app.seen.has(key)) return false;
     app.seen.add(key); return true;
   }
-  function valueTag(v, h, phase) {
+  const SUIT_NAME = { '♠': 'spade', '♥': 'heart', '♦': 'diamond', '♣': 'club' };
+  function cardHTML(c, key, delay) {
+    const fresh = isNew(key);
+    const style = fresh && delay ? ` style="--delay:${delay}ms"` : '';
+    if (!c || c.hidden) return `<div class="card back${fresh ? ' deal' : ''}"${style}></div>`;
+    const face = c.r === 'K' || c.r === 'Q' || c.r === 'J' || c.r === 'A';
+    return `<div class="card${fresh ? ' deal' : ''} ${SUIT_NAME[c.s]}" data-suit="${c.s}"${style}>
+      <span class="corner"><b>${c.r}</b><i>${c.s}</i></span>
+      <span class="pip${face ? ' face' : ''}">${face ? c.r : c.s}</span>
+      <span class="corner flip"><b>${c.r}</b><i>${c.s}</i></span>
+    </div>`;
+  }
+  function valueTag(v, h, phase, key, delay) {
     if (!v) return '';
     let text = v.total + (v.soft && v.total < 21 && !v.bust ? ' soft' : '');
     let k = '';
@@ -214,44 +223,113 @@
       k = { win: 'win', blackjack: 'bj', lose: 'lose', push: 'push', bust: 'bust' }[h.result] || '';
       text = { win: 'Win ' + money(h.payout - h.bet), blackjack: 'Blackjack ' + money(h.payout - h.bet), lose: 'Lose', push: 'Push', bust: 'Bust' }[h.result];
     }
-    return `<span class="hand-value ${k}">${text}</span>`;
+    const fresh = isNew(key + ':' + text);
+    return `<span class="hand-value ${k}${fresh ? ' anim' : ''}"${fresh && delay ? ` style="--tag-delay:${delay}ms"` : ''}>${text}</span>`;
   }
-  function chipClass(n) {
-    const d = CHIPS.slice().reverse().find((c) => n >= c) || 1;
-    return 'd' + d;
+  function chipClass(n) { return 'd' + (CHIPS.slice().reverse().find((c) => n >= c) || 1); }
+  function chipLabel(n) { return n >= 1000 ? (n / 1000).toFixed(n % 1000 ? 1 : 0) + 'K' : String(n); }
+  // A stack of chips for an amount: greedy split into denominations, top chip shows the total.
+  function stack(amount, extraClass) {
+    if (!amount) return '';
+    const parts = [];
+    let left = amount;
+    for (const d of CHIPS.slice().reverse()) while (left >= d && parts.length < 8) { parts.push(d); left -= d; }
+    parts.reverse();
+    return `<span class="stack${extraClass ? ' ' + extraClass : ''}" style="--n:${parts.length}">${parts.map((d, i) => `<span class="chip ${chipClass(d)}" style="--i:${i}">${i === parts.length - 1 ? chipLabel(amount) : ''}</span>`).join('')}</span>`;
   }
-  function chip(n, small) { return `<span class="chip ${chipClass(n)}${small ? ' small' : ''}">${n >= 1000 ? (n / 1000).toFixed(n % 1000 ? 1 : 0) + 'K' : n}</span>`; }
+  // Cards fly in from the shoe: measure once per fresh card, then restart its animation.
+  function aimCardsFromShoe() {
+    const shoe = $('shoe-box'); if (!shoe) return;
+    const cards = document.querySelectorAll('.card.deal:not([data-aimed])');
+    if (!cards.length) return;
+    const sr = shoe.getBoundingClientRect();
+    for (const el of cards) {
+      el.dataset.aimed = '1';
+      el.style.animation = 'none';
+      const r = el.getBoundingClientRect();
+      el.style.setProperty('--dx', (sr.left + sr.width / 2 - r.left - r.width / 2) + 'px');
+      el.style.setProperty('--dy', (sr.top + sr.height / 2 - r.top - r.height / 2) + 'px');
+      el.style.animation = '';
+    }
+  }
+  // Counters tick toward their new value instead of jumping.
+  const rafs = {};
+  function tickNumber(id, key, target, format, className) {
+    const el = $(id);
+    if (typeof app[key] !== 'number') { app[key] = target; el.textContent = format(target); if (className) el.className = className(target); return; }
+    if (app[key] === target) { if (className) el.className = className(target); return; }
+    cancelAnimationFrame(rafs[id]);
+    const from = app[key], t0 = performance.now(), dur = 700;
+    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      const v = Math.round(from + (target - from) * e);
+      el.textContent = format(v); if (className) el.className = className(v) + ' bump';
+      app[key] = v;
+      if (k < 1) rafs[id] = requestAnimationFrame(step); else app[key] = target;
+    };
+    rafs[id] = requestAnimationFrame(step);
+  }
 
+  // ----- table -----
   function renderTable(s) {
     const meP = me();
-    // top bar
+    const seated = s.players.filter((p) => p.status === 'seated' || p.status === 'broke' || (p.status === 'left' && p.hands.length));
+    const active = seated.filter((p) => p.hands.length);
+    const n = active.length;
+
+    // --- timing plan for this render ---
+    const dealNew = n > 0 && isNew(`${s.round}:deal`);
+    const dealBase = dealNew ? (2 * n + 2) * DEAL_STEP + 120 : 0;
+    const flipNew = !s.dealer.holeHidden && s.dealer.cards.length >= 2 && isNew(`${s.round}:D:flip`);
+    const flipAt = dealBase;
+    const drawsStart = flipAt + (flipNew ? FLIP_MS : 0);
+    const newDraws = s.dealer.cards.slice(2).filter((c, i) => !app.seen.has(`${s.round}:D:${i + 2}:v`)).length;
+    const settleAt = drawsStart + newDraws * DRAW_STEP + (newDraws ? 200 : 0);
+    const t = { dealBase, flipAt, drawsStart, settleAt, n, seatIndex: (pid) => active.findIndex((p) => p.id === pid) };
+
+    // bank panel (top-left)
     if (meP) {
       const pnl = meP.bank - meP.start;
-      const el = $('pnl'); el.textContent = signed(pnl); el.className = 'pnl ' + cls(pnl);
-      $('pnl-sub').textContent = `Bankroll ${money(meP.bank)} · buy-in ${money(meP.start)}${meP.status === 'spectating' ? ' · watching' : ''}`;
+      const delay = s.phase === 'settled' && isNew(`${s.round}:pnl`) ? settleAt : 0;
+      clearTimeout(app.pnlTimer);
+      const apply = () => {
+        tickNumber('bank', 'bankShown', meP.bank, money, null);
+        tickNumber('pnl', 'pnlShown', pnl, signed, (v) => 'pnl ' + cls(v));
+      };
+      if (delay) app.pnlTimer = setTimeout(apply, delay); else apply();
+      $('bank-sub').textContent = `Buy-in ${money(meP.start)}${meP.status === 'spectating' ? ' · watching' : ''}`;
     }
     const sh = s.shoe;
-    const pct = Math.round((sh.remaining / sh.total) * 100);
-    $('shoe-pill').innerHTML = `Shoe <span class="bar"><i style="width:${pct}%"></i></span> ${sh.remaining} cards`;
+    $('shoe-pill').innerHTML = `Shoe <span class="bar"><i style="width:${Math.round((sh.remaining / sh.total) * 100)}%"></i></span> ${sh.remaining} cards`;
 
     // dealer
     const dh = $('dealer-hand');
-    dh.innerHTML = s.dealer.cards.map((c, i) => cardHTML(c, `${s.round}:D:${i}:${c.hidden ? 'h' : 'v'}`)).join('');
-    if (!s.dealer.holeHidden && s.dealer.cards.length >= 2 && !app.seen.has(`${s.round}:D:flip`)) {
-      app.seen.add(`${s.round}:D:flip`);
-      const second = dh.children[1]; if (second) second.classList.add('flip-in');
-    }
+    dh.innerHTML = s.dealer.cards.map((c, i) => {
+      const key = `${s.round}:D:${i}:${c.hidden ? 'h' : 'v'}`;
+      let delay = 0;
+      if (i === 0) delay = n * DEAL_STEP;
+      else if (i === 1) delay = c.hidden ? (2 * n + 1) * DEAL_STEP : flipAt;
+      else delay = drawsStart + (i - 2) * DRAW_STEP;
+      return cardHTML(c, key, delay);
+    }).join('');
+    if (flipNew) { const second = dh.children[1]; if (second) { second.classList.remove('deal'); second.classList.add('flip-in'); second.dataset.aimed = '1'; second.style.setProperty('--delay', flipAt + 'ms'); } }
     let dv = '';
     if (s.dealer.cards.length) {
       const v = s.dealer.value;
       const bj = !s.dealer.holeHidden && BJ.isNatural(s.dealer.cards);
-      dv = `<span class="hand-value ${v.bust ? 'bust' : bj ? 'bj' : ''}">${v.bust ? 'Dealer busts' : bj ? 'Blackjack' : (s.dealer.holeHidden ? 'Showing ' : '') + v.total + (v.soft && v.total < 21 && !s.dealer.holeHidden ? ' soft' : '')}</span>`;
+      const text = v.bust ? 'Dealer busts' : bj ? 'Blackjack' : (s.dealer.holeHidden ? 'Showing ' : '') + v.total + (v.soft && v.total < 21 && !s.dealer.holeHidden ? ' soft' : '');
+      const fresh = isNew(`${s.round}:D:v:${text}`);
+      const delay = s.dealer.holeHidden ? (n + 1) * DEAL_STEP : settleAt;
+      dv = `<span class="hand-value ${v.bust ? 'bust' : bj ? 'bj' : ''}${fresh ? ' anim' : ''}"${fresh ? ` style="--tag-delay:${delay}ms"` : ''}>${text}</span>`;
     }
     $('dealer-value').innerHTML = dv;
 
     // seats
-    const seated = s.players.filter((p) => p.status === 'seated' || p.status === 'broke' || (p.status === 'left' && p.hands.length));
-    $('seats').innerHTML = seated.map((p) => seatHTML(p, s)).join('') || '<div class="seat"><div class="status-tag">No one at the table</div></div>';
+    const betting = s.phase === 'betting' && meP && meP.status === 'seated' && !meP.locked;
+    $('seats').innerHTML = seated.map((p) => seatHTML(p, s, t, betting)).join('') || '<div class="seat empty"><div class="status-tag">No one at the table</div></div>';
+    $('seats').classList.toggle('betting', !!betting);
+    aimCardsFromShoe();
 
     // sidebar
     $('log').innerHTML = s.log.map((l) => `<li>${esc(l)}</li>`).join('');
@@ -259,82 +337,129 @@
     const specs = s.players.filter((p) => p.status === 'spectating');
     $('spectators').innerHTML = specs.length ? `<b>Watching:</b> ${specs.map((p) => esc(p.name)).join(', ')}` : '';
 
+    app.barDelay = s.phase === 'settled' && isNew(`${s.round}:settle-bar`) ? settleAt : (dealNew ? dealBase : 0);
     renderActions(s, meP);
     renderOverlay(s, meP);
 
-    // settled countdown ticks
-    if (s.phase === 'settled' && !app.tick) app.tick = setInterval(() => { if (app.state && app.state.phase === 'settled') renderActions(app.state, me()); else { clearInterval(app.tick); app.tick = null; } }, 500);
+    if (s.phase === 'settled' && !app.tick) app.tick = setInterval(() => {
+      const st = app.state;
+      if (!st || st.phase !== 'settled') { clearInterval(app.tick); app.tick = null; return; }
+      const el = document.querySelector('#actions .countdown');
+      if (el) el.textContent = `Next hand in ${Math.max(0, Math.ceil((NEXT_ROUND_MS - (Date.now() - (st.settledAt || Date.now()))) / 1000))}s`;
+    }, 500);
   }
 
-  function seatHTML(p, s) {
+  function seatHTML(p, s, t, betting) {
     const mine = p.id === app.myId;
     const isTurn = s.turn && s.turn.pid === p.id;
     const pnl = p.bank - p.start;
-    let inner = '';
+    const si = t.seatIndex(p.id);
+    const anim = (key) => (isNew(`${s.round}:${p.id}:${key}`) ? ' anim' : '');
+    const pend = app.pending;
+
+    // ----- hands -----
+    let hands = '';
     if (p.hands.length) {
-      inner = `<div class="hands">${p.hands.map((h, hi) => {
+      hands = `<div class="hands">${p.hands.map((h, hi) => {
         const turnHand = isTurn && s.turn.hand === hi;
+        const cards = h.cards.map((c, ci) => {
+          const initial = hi === 0 && !h.split && ci < 2;
+          const delay = initial ? (ci * (t.n + 1) + si) * DEAL_STEP : 0;
+          return cardHTML(c, `${s.round}:${p.id}:${hi}:${ci}:${c.r}${c.s}`, delay);
+        }).join('');
+        const tagDelay = s.phase === 'settled' ? t.settleAt : (h.cards.length <= 2 && !h.split ? t.dealBase : 0);
         const behind = Object.entries(h.behind || {});
         return `<div class="hand-box${turnHand ? ' turn' : ''}">
-          <div class="hand">${h.cards.map((c, ci) => cardHTML(c, `${s.round}:${p.id}:${hi}:${ci}:${c.r}${c.s}`)).join('')}</div>
-          ${valueTag(h.value, h, s.phase)}
-          <div class="bets">${chip(h.bet, true)}${behind.map(([bid, amt]) => `<span class="bet-tag">${chip(amt, true)}<span>${esc(nameOf(bid, s))}</span></span>`).join('')}</div>
+          <div class="hand">${cards}</div>
+          ${valueTag(h.value, h, s.phase, `${s.round}:v:${p.id}:${hi}`, tagDelay)}
+          ${p.hands.length > 1 ? `<div class="hand-bet${anim('hb' + hi)}">${stack(h.bet)}${behind.map(([bid, amt]) => `<span class="behind-tag">${stack(amt)}<span>${esc(nameOf(bid, s))}</span></span>`).join('')}</div>` : ''}
         </div>`;
       }).join('')}</div>`;
-    } else if (s.phase === 'betting') {
-      inner = p.status === 'broke' ? '<div class="status-tag">Out of chips</div>'
-        : p.locked ? (p.sitOut ? '<div class="status-tag">Sitting out</div>' : `<div class="status-tag lock">Locked in</div><div class="bets">${p.bets.main ? chip(p.bets.main, true) : ''}${p.bets.bust ? `<span class="bet-tag">${chip(p.bets.bust, true)}<span>Bust</span></span>` : ''}${Object.entries(p.bets.behind).map(([bid, amt]) => `<span class="bet-tag">${chip(amt, true)}<span>${esc(nameOf(bid, s))}</span></span>`).join('')}</div>`)
-          : '<div class="status-tag">Placing bets…</div>';
-    } else if (p.sitOut) {
-      const side = [];
-      if (p.bets.bust) side.push(`<span class="bet-tag">${chip(p.bets.bust, true)}<span>${s.phase === 'settled' && p.bustResult ? esc(p.bustResult) : 'Dealer bust'}</span></span>`);
-      for (const [bid, amt] of Object.entries(p.bets.behind)) side.push(`<span class="bet-tag">${chip(amt, true)}<span>on ${esc(nameOf(bid, s))}</span></span>`);
-      inner = side.length ? `<div class="status-tag">Side bets only</div><div class="bets">${side.join('')}</div>` : '<div class="status-tag">Sitting out</div>';
-    } else if (p.status === 'broke') inner = '<div class="status-tag">Out of chips</div>';
-    // extra side bets for players who also have hands
-    if (p.hands.length && (p.bets.bust || p.insurance > 0)) {
-      inner += `<div class="bets">${p.bets.bust ? `<span class="bet-tag">${chip(p.bets.bust, true)}<span>${s.phase === 'settled' && p.bustResult ? esc(p.bustResult) : 'Dealer bust'}</span></span>` : ''}${p.insurance > 0 ? `<span class="bet-tag">${chip(p.insurance, true)}<span>Insurance</span></span>` : ''}</div>`;
+    } else {
+      let msg = '';
+      if (p.status === 'broke') msg = 'Out of chips';
+      else if (s.phase === 'betting') msg = p.locked ? (p.sitOut ? 'Sitting out' : 'Locked in') : 'Placing bets…';
+      else if (p.sitOut) msg = (p.bets.bust || Object.keys(p.bets.behind).length) ? 'Side bets only' : 'Sitting out';
+      hands = `<div class="hands"><div class="status-tag${p.locked && !p.sitOut ? ' lock' : ''}${anim('st:' + msg)}">${msg}</div></div>`;
     }
-    const net = s.phase === 'settled' && typeof p.lastNet === 'number' && (p.hands.length || !p.sitOut) ? ` · <b class="${cls(p.lastNet)}">${signed(p.lastNet)}</b>` : '';
-    return `<div class="seat${mine ? ' me' : ''}${isTurn ? ' turn' : ''}${p.status === 'left' || !p.connected ? ' away' : ''}">
-      <div class="name">${esc(p.name)}${mine ? '<span class="you">YOU</span>' : ''}</div>
-      <div class="money">${money(p.bank)} · <b class="${cls(pnl)}">${signed(pnl)}</b>${net}</div>
-      ${inner}
+
+    // ----- betting spots -----
+    const single = p.hands.length === 1 ? p.hands[0] : null;
+    const mainAmt = betting && mine ? pend.main : (single ? single.bet : p.bets.main);
+    const bustAmt = betting && mine ? pend.bust : p.bets.bust;
+    const myBehindHere = betting && !mine ? (pend.behind[p.id] || 0) : 0;
+    const behindOn = single ? Object.entries(single.behind || {}) : Object.entries(p.bets.behind ? {} : {});
+    // behind bets others locked on this player (before deal they live on the bettor)
+    const lockedBehind = s.phase === 'betting' ? s.players.filter((q) => q.locked && q.bets.behind && q.bets.behind[p.id]).map((q) => [q.id, q.bets.behind[p.id]]) : behindOn;
+    const clickable = betting && p.status === 'seated' && (mine || !p.locked || true);
+    const mainSpot = `<div class="spot main${mainAmt ? ' has' : ''}${clickable ? ' click' : ''}" data-spot="${mine ? 'main' : 'behind:' + p.id}" role="button" tabindex="0" aria-label="${mine ? 'Your bet' : 'Bet behind ' + esc(p.name)}">
+        <span class="spot-label">${mine ? 'BET' : 'BEHIND'}</span>${stack(mainAmt, 'anim')}
+        ${myBehindHere ? `<span class="behind-mine">${stack(myBehindHere)}<span>YOU</span></span>` : ''}
+      </div>`;
+    const bustSpot = mine || bustAmt ? `<div class="spot side${bustAmt ? ' has' : ''}${clickable && mine ? ' click' : ''}" data-spot="${mine ? 'bust' : ''}" role="button" tabindex="0" aria-label="Dealer bust bet">
+        <span class="spot-label">DEALER<br>BUST</span>${stack(bustAmt, 'anim')}
+      </div>` : '<div class="spot side ghost"></div>';
+    const tags = [];
+    for (const [bid, amt] of lockedBehind) if (bid !== app.myId || !betting) tags.push(`<span class="behind-tag">${stack(amt)}<span>${bid === app.myId ? 'YOU' : esc(nameOf(bid, s))}</span></span>`);
+    if (p.insurance > 0) tags.push(`<span class="behind-tag ins">${stack(p.insurance)}<span>INS</span></span>`);
+    if (p.bets.bust && s.phase === 'settled' && p.bustResult) tags.push(`<span class="behind-tag result">${esc(p.bustResult)}</span>`);
+    if (!mine && s.phase === 'betting' && !p.hands.length && Object.keys(p.bets.behind || {}).length && p.locked) {
+      for (const [bid, amt] of Object.entries(p.bets.behind)) tags.push(`<span class="behind-tag">${stack(amt)}<span>on ${esc(nameOf(bid, s))}</span></span>`);
+    }
+    if (mine && s.phase !== 'betting' && Object.keys(p.bets.behind || {}).length) {
+      for (const [bid, amt] of Object.entries(p.bets.behind)) tags.push(`<span class="behind-tag">${stack(amt)}<span>on ${esc(nameOf(bid, s))}</span></span>`);
+    }
+
+    const showNet = s.phase === 'settled' && typeof p.lastNet === 'number' && (p.hands.length || !p.sitOut);
+    const net = showNet ? `<b class="net ${cls(p.lastNet)}${anim('net')}" style="--tag-delay:${t.settleAt}ms">${signed(p.lastNet)}</b>` : '';
+    return `<div class="seat${mine ? ' me' : ''}${isTurn ? ' turn' : ''}${p.status === 'left' || !p.connected ? ' away' : ''}${anim('seat')}">
+      ${hands}
+      <div class="spots">${mainSpot}${bustSpot}</div>
+      <div class="tags">${tags.join('')}</div>
+      <div class="plate">
+        <div class="name">${esc(p.name)}${mine ? '<span class="you">YOU</span>' : ''}</div>
+        <div class="money"><span>${money(p.bank)}</span><b class="${cls(pnl)}">${signed(pnl)}</b>${net}</div>
+      </div>
     </div>`;
   }
   function nameOf(pid, s) { const p = s.players.find((x) => x.id === pid); return p ? p.name : '?'; }
 
   // ----- actions bar -----
-  function renderActions(s, meP) {
+  function setBar(html) {
     const bar = $('actions');
+    if (bar.dataset.html === html) return;
+    bar.style.setProperty('--bar-delay', (app.barDelay || 0) + 'ms');
+    bar.innerHTML = html; bar.dataset.html = html;
+  }
+  function renderActions(s, meP) {
     const isHost = app.role === 'host';
-    if (!meP) { bar.innerHTML = '<span class="note">Connecting…</span>'; return; }
+    if (!meP) { setBar('<span class="note">Connecting…</span>'); return; }
     if (meP.status === 'spectating') {
       const seats = s.players.filter((p) => p.status === 'seated').length;
-      bar.innerHTML = `<span class="note">You're watching.</span>${meP.bank > 0 && seats < BJ.MAX_SEATS ? '<button class="btn gold" data-act="sit">Take a seat</button>' : ''}`;
+      setBar(`<span class="note">You're watching.</span>${meP.bank > 0 && seats < BJ.MAX_SEATS ? '<button class="btn gold big" data-act="sit">Take a seat</button>' : ''}`);
       return;
     }
-    if (meP.status === 'broke') { bar.innerHTML = '<span class="note">Out of chips.</span>'; return; }
+    if (meP.status === 'broke') { setBar('<span class="note">Out of chips.</span>'); return; }
 
     switch (s.phase) {
       case 'betting': {
-        if (meP.status !== 'seated') { bar.innerHTML = '<span class="note">Waiting…</span>'; return; }
+        if (meP.status !== 'seated') { setBar('<span class="note">Waiting…</span>'); return; }
         if (meP.locked) {
           const waiting = s.players.filter((p) => p.status === 'seated' && !p.locked).map((p) => p.name);
-          bar.innerHTML = `<span class="note">Locked in. Waiting for <b>${esc(waiting.join(', ') || '…')}</b></span>${isHost ? '<button class="btn small" data-act="forceDeal">Deal now</button>' : ''}`;
+          setBar(`<span class="note">Locked in. Waiting for <b>${esc(waiting.join(', ') || '…')}</b></span>${isHost ? '<button class="btn" data-act="forceDeal">Deal now</button>' : ''}`);
           return;
         }
-        renderBetBuilder(s, meP, bar);
+        setBar(betBuilderHTML(s, meP));
         return;
       }
       case 'insurance': {
         if (meP.hands.length && meP.insurance === null) {
           const amt = Math.floor(meP.hands[0].bet / 2);
-          bar.innerHTML = `<span class="note">Dealer shows an Ace. Insurance costs <b>${money(amt)}</b> and pays 2 to 1.</span>
-            <div class="act-row"><button class="btn act gold" data-act="ins-yes" ${meP.bank < amt || amt <= 0 ? 'disabled' : ''}>Take insurance</button><button class="btn act" data-act="ins-no">No insurance</button></div>`;
+          setBar(`<span class="note">Dealer shows an Ace. Insurance costs <b>${money(amt)}</b> and pays 2 to 1.</span>
+            <div class="act-row"><button class="btn act gold" data-act="ins-yes" ${meP.bank < amt || amt <= 0 ? 'disabled' : ''}>Take insurance</button><button class="btn act" data-act="ins-no">No insurance</button></div>`);
         } else {
           const waiting = s.players.filter((p) => p.hands.length && p.insurance === null).map((p) => p.name);
-          bar.innerHTML = `<span class="note">Waiting for <b>${esc(waiting.join(', '))}</b> to decide on insurance…</span>`;
+          setBar(`<span class="note">Waiting for <b>${esc(waiting.join(', '))}</b> to decide on insurance…</span>`);
         }
         return;
       }
@@ -344,86 +469,96 @@
           const canDouble = h.cards.length === 2 && !h.doubled && !h.fromAces && meP.bank >= h.bet;
           const canSplit = h.cards.length === 2 && meP.hands.length < BJ.MAX_HANDS && !h.fromAces && meP.bank >= h.bet &&
             (h.cards[0].r === h.cards[1].r || (BJ.cardValue(h.cards[0].r) === 10 && BJ.cardValue(h.cards[1].r) === 10));
-          bar.innerHTML = `<span class="note">${meP.hands.length > 1 ? `Hand ${s.turn.hand + 1} of ${meP.hands.length} · ` : ''}Your move.</span>
-            <div class="act-row">
-              <button class="btn act gold" data-act="hit">Hit<kbd>H</kbd></button>
-              <button class="btn act" data-act="stand">Stand<kbd>S</kbd></button>
-              <button class="btn act" data-act="double" ${canDouble ? '' : 'disabled'}>Double<kbd>D</kbd></button>
-              <button class="btn act" data-act="split" ${canSplit ? '' : 'disabled'}>Split<kbd>P</kbd></button>
-            </div>`;
+          setBar(`<span class="note">${meP.hands.length > 1 ? `Hand ${s.turn.hand + 1} of ${meP.hands.length} · ` : ''}Your move</span>
+            <div class="act-row play">
+              <button class="btn act hit" data-act="hit"><span>Hit</span><kbd>H</kbd></button>
+              <button class="btn act stand" data-act="stand"><span>Stand</span><kbd>S</kbd></button>
+              <button class="btn act double" data-act="double" ${canDouble ? '' : 'disabled'}><span>Double</span><kbd>D</kbd></button>
+              <button class="btn act split" data-act="split" ${canSplit ? '' : 'disabled'}><span>Split</span><kbd>P</kbd></button>
+            </div>`);
         } else {
           const who = s.turn ? nameOf(s.turn.pid, s) : '…';
-          bar.innerHTML = `<span class="note"><b>${esc(who)}</b> is playing…</span>`;
+          setBar(`<span class="note"><b>${esc(who)}</b> is playing…</span>`);
         }
         return;
       }
-      case 'dealer': bar.innerHTML = '<span class="note">Dealer plays…</span>'; return;
+      case 'dealer': setBar('<span class="note">Dealer plays…</span>'); return;
       case 'settled': {
         const left = Math.max(0, Math.ceil((NEXT_ROUND_MS - (Date.now() - (s.settledAt || Date.now()))) / 1000));
         const net = typeof meP.lastNet === 'number' && !(meP.sitOut && !meP.bets.bust && !Object.keys(meP.bets.behind).length) ? meP.lastNet : null;
         const banner = net === null ? '<span class="note">Hand over.</span>' : `<span class="result-banner ${cls(net)}">${net > 0 ? 'You won ' : net < 0 ? 'You lost ' : 'Push · '}${money(net)}</span>`;
-        bar.innerHTML = `${banner}<span class="countdown">Next hand in ${left}s</span>${isHost ? '<button class="btn small" data-act="next">Next hand now</button>' : ''}`;
+        setBar(`${banner}<span class="countdown">Next hand in ${left}s</span>${isHost ? '<button class="btn" data-act="next">Next hand now</button>' : ''}`);
         return;
       }
-      default: bar.innerHTML = '';
+      default: setBar('');
     }
   }
 
-  function renderBetBuilder(s, meP, bar) {
-    const pend = app.pending;
-    const total = pend.main + pend.bust + Object.values(pend.behind).reduce((a, b) => a + b, 0);
+  function pendingTotal() { return app.pending.main + app.pending.bust + sum(app.pending.behind); }
+  function betBuilderHTML(s, meP) {
+    const total = pendingTotal();
     const left = meP.bank - total;
-    const others = s.players.filter((p) => p.status === 'seated' && p.id !== meP.id);
-    if (app.behindTarget && !others.some((p) => p.id === app.behindTarget)) app.behindTarget = null;
-    if (!app.behindTarget && others.length) app.behindTarget = others[0].id;
-    if (app.slot === 'behind' && !others.length) app.slot = 'main';
-    const behindAmt = app.behindTarget ? pend.behind[app.behindTarget] || 0 : 0;
-    const behindTotal = Object.values(pend.behind).reduce((a, b) => a + b, 0);
-    bar.innerHTML = `<div class="bet-builder">
-      <div class="slots">
-        <button class="slot${app.slot === 'main' ? ' active' : ''}" data-slot="main"><small>Main bet</small><span class="v">${money(pend.main)}</span></button>
-        <button class="slot${app.slot === 'bust' ? ' active' : ''}" data-slot="bust" title="Pays 2 to 1 if the dealer busts with 3 cards, 3 to 1 with 4 or more"><small>Dealer bust</small><span class="v">${money(pend.bust)}</span></button>
-        ${others.length ? `<div class="slot${app.slot === 'behind' ? ' active' : ''}" data-slot="behind" role="button" tabindex="0"><small>Bet behind${behindTotal > behindAmt ? ` · ${money(behindTotal)} total` : ''}</small><span class="v">${money(behindAmt)}</span>
-          <select id="behind-target" aria-label="Bet behind which player">${others.map((p) => `<option value="${p.id}"${p.id === app.behindTarget ? ' selected' : ''}>${esc(p.name)}${pend.behind[p.id] ? ' · ' + money(pend.behind[p.id]) : ''}</option>`).join('')}</select></div>` : ''}
+    if (!CHIPS.includes(app.chipSel) || app.chipSel > left) {
+      const best = CHIPS.filter((c) => c <= left).pop();
+      if (best) app.chipSel = Math.min(app.chipSel, best);
+    }
+    const canRepeat = !!app.lastBets && (app.lastBets.main + app.lastBets.bust + sum(app.lastBets.behind)) <= meP.bank && (app.lastBets.main + app.lastBets.bust + sum(app.lastBets.behind)) > 0;
+    const canDouble = total > 0 && total * 2 <= meP.bank;
+    return `<div class="bet-builder${isNew(`${s.round}:builder`) ? ' enter' : ''}">
+      <div class="rack" role="radiogroup" aria-label="Chip">
+        ${CHIPS.map((c) => `<button class="chip pick ${chipClass(c)}${c === app.chipSel ? ' sel' : ''}" data-chip="${c}" ${c > left ? 'disabled' : ''} role="radio" aria-checked="${c === app.chipSel}" aria-label="${c} chip">${chipLabel(c)}</button>`).join('')}
       </div>
-      <div class="rack">
-        ${CHIPS.map((c) => `<button class="chip pick ${chipClass(c)}" data-chip="${c}" ${c > left ? 'disabled' : ''} aria-label="Add ${c}">${c >= 1000 ? c / 1000 + 'K' : c}</button>`).join('')}
-        <div class="tools"><button class="btn small ghost" data-act="undo" ${app.undo.length ? '' : 'disabled'}>Undo</button><button class="btn small ghost" data-act="clear" ${total ? '' : 'disabled'}>Clear</button><button class="btn small ghost" data-act="allin" ${left > 0 ? '' : 'disabled'}>All in</button></div>
+      <div class="tools">
+        <button class="btn tool" data-act="undo" ${app.undo.length ? '' : 'disabled'}>Undo</button>
+        <button class="btn tool" data-act="clear" ${total ? '' : 'disabled'}>Clear</button>
+        <button class="btn tool" data-act="repeat" ${canRepeat ? '' : 'disabled'} title="Place the same bets as last hand">Repeat</button>
+        <button class="btn tool" data-act="double-bet" ${canDouble ? '' : 'disabled'} title="Double every bet on the table">2×</button>
+        <button class="btn tool" data-act="allin" ${left > 0 ? '' : 'disabled'}>All in</button>
       </div>
       <div class="lock-col">
-        <button class="btn gold" data-act="lock" ${total > 0 ? '' : 'disabled'}>Lock in ${money(total)}</button>
-        <button class="btn small ghost" data-act="sitout">Sit out</button>
-        ${isHostAndOthersLocked(s) ? '<button class="btn small ghost" data-act="forceDeal">Deal now</button>' : ''}
+        <button class="btn gold big" data-act="lock" ${total > 0 ? '' : 'disabled'}>${total > 0 ? 'Deal · ' + money(total) : 'Place a bet'}</button>
+        <div class="lock-row"><button class="btn tool" data-act="sitout">Sit out</button>${app.role === 'host' && s.players.some((p) => p.status === 'seated' && p.locked) ? '<button class="btn tool" data-act="forceDeal">Deal now</button>' : ''}</div>
       </div>
+      <div class="hint">${total ? 'Tap a circle to add more chips, undo to take one back, then deal.' : 'Pick a chip, then tap your BET circle. Tap DEALER BUST for the side bet, or a friend’s circle to bet behind them.'}</div>
     </div>`;
   }
-  function isHostAndOthersLocked(s) {
-    return app.role === 'host' && s.players.some((p) => p.status === 'seated' && p.locked);
-  }
-  function addChip(n) {
+  function placeChip(spot, n) {
+    const m = me(); if (!m) return false;
+    if (n > m.bank - pendingTotal()) { toast('Not enough chips'); return false; }
     const pend = app.pending;
-    if (app.slot === 'main') pend.main += n;
-    else if (app.slot === 'bust') pend.bust += n;
-    else if (app.slot === 'behind' && app.behindTarget) pend.behind[app.behindTarget] = (pend.behind[app.behindTarget] || 0) + n;
-    else return;
-    app.undo.push({ slot: app.slot, target: app.behindTarget, n });
+    if (spot === 'main') pend.main += n;
+    else if (spot === 'bust') pend.bust += n;
+    else if (spot.startsWith('behind:')) { const pid = spot.slice(7); pend.behind[pid] = (pend.behind[pid] || 0) + n; }
+    else return false;
+    app.undo.push({ spot, n });
+    return true;
   }
   function undoChip() {
     const u = app.undo.pop(); if (!u) return;
     const pend = app.pending;
-    if (u.slot === 'main') pend.main = Math.max(0, pend.main - u.n);
-    else if (u.slot === 'bust') pend.bust = Math.max(0, pend.bust - u.n);
-    else if (u.slot === 'behind') { pend.behind[u.target] = Math.max(0, (pend.behind[u.target] || 0) - u.n); if (!pend.behind[u.target]) delete pend.behind[u.target]; }
+    if (u.spot === 'main') pend.main = Math.max(0, pend.main - u.n);
+    else if (u.spot === 'bust') pend.bust = Math.max(0, pend.bust - u.n);
+    else { const pid = u.spot.slice(7); pend.behind[pid] = Math.max(0, (pend.behind[pid] || 0) - u.n); if (!pend.behind[pid]) delete pend.behind[pid]; }
   }
   function clearPending() { app.pending = { main: 0, bust: 0, behind: {} }; app.undo = []; }
+  function setPending(b) {
+    const s = app.state;
+    const behind = {};
+    for (const [pid, amt] of Object.entries(b.behind || {})) { const q = s && s.players.find((x) => x.id === pid); if (q && q.status === 'seated' && amt > 0) behind[pid] = amt; }
+    app.pending = { main: b.main || 0, bust: b.bust || 0, behind };
+    app.undo = [];
+  }
+  function refreshBetting() { if (app.state) renderTable(app.state); }
 
-  // ----- overlay (broke / host left) -----
+  // ----- overlay (broke) -----
   function renderOverlay(s, meP) {
     const ov = $('overlay');
     if (meP && meP.status === 'broke') {
-      ov.hidden = false;
-      ov.innerHTML = `<div class="modal"><h2>Out of chips</h2><p>You started with ${money(meP.start)} and it's all gone. Stay and watch, or leave the table.</p>
-        <div class="act-row"><button class="btn gold" data-act="spectate">Spectate</button><button class="btn danger" data-act="leave">Leave table</button></div></div>`;
+      if (ov.hidden) {
+        ov.innerHTML = `<div class="modal"><h2>Out of chips</h2><p>You started with ${money(meP.start)} and it's all gone. Stay and watch, or leave the table.</p>
+          <div class="act-row"><button class="btn gold big" data-act="spectate">Spectate</button><button class="btn danger" data-act="leave">Leave table</button></div></div>`;
+        ov.hidden = false;
+      }
     } else ov.hidden = true;
   }
 
@@ -453,52 +588,76 @@
   $('btn-lobby-leave').addEventListener('click', () => { if (app.role === 'guest') dispatch('leave'); goHome(''); });
   $('btn-leave').addEventListener('click', () => { if (app.role === 'guest') dispatch('leave'); goHome(''); });
 
-  function onAct(act) {
+  function onAct(act, el) {
     switch (act) {
       case 'hit': case 'stand': case 'double': case 'split': dispatch('play', { action: act }); break;
       case 'ins-yes': dispatch('insurance', { take: true }); break;
       case 'ins-no': dispatch('insurance', { take: false }); break;
-      case 'lock': { const p = app.pending; dispatch('lock', { main: p.main, bust: p.bust, behind: { ...p.behind } }); clearPending(); break; }
+      case 'lock': {
+        const p = app.pending;
+        app.lastBets = { main: p.main, bust: p.bust, behind: { ...p.behind } };
+        dispatch('lock', { main: p.main, bust: p.bust, behind: { ...p.behind } });
+        clearPending(); break;
+      }
       case 'sitout': clearPending(); dispatch('lock', {}); break;
       case 'forceDeal': dispatch('forceDeal'); break;
       case 'next': dispatch('next'); break;
       case 'spectate': dispatch('spectate'); break;
       case 'sit': dispatch('sit'); break;
       case 'leave': dispatch('leave'); goHome(''); break;
-      case 'undo': undoChip(); renderActions(app.state, me()); break;
-      case 'clear': clearPending(); renderActions(app.state, me()); break;
+      case 'undo': undoChip(); refreshBetting(); break;
+      case 'clear': clearPending(); refreshBetting(); break;
+      case 'repeat': if (app.lastBets) { setPending(app.lastBets); refreshBetting(); } break;
+      case 'double-bet': {
+        const p = app.pending; const m = me();
+        if (m && pendingTotal() * 2 <= m.bank) { setPending({ main: p.main * 2, bust: p.bust * 2, behind: Object.fromEntries(Object.entries(p.behind).map(([k, v]) => [k, v * 2])) }); refreshBetting(); }
+        break;
+      }
       case 'allin': {
         const m = me(); if (!m) return;
-        const p = app.pending;
-        const left = m.bank - (p.main + p.bust + Object.values(p.behind).reduce((a, b) => a + b, 0));
-        if (left > 0) addChip(left);
-        renderActions(app.state, me());
+        const left = m.bank - pendingTotal();
+        if (left > 0) placeChip('main', left);
+        refreshBetting();
         break;
       }
       default: break;
     }
+    void el;
   }
   document.addEventListener('click', (e) => {
     const chipBtn = e.target.closest('button[data-chip]');
-    if (chipBtn) { addChip(Number(chipBtn.dataset.chip)); renderActions(app.state, me()); return; }
-    const slot = e.target.closest('[data-slot]');
-    if (slot && !e.target.closest('select')) { app.slot = slot.dataset.slot; renderActions(app.state, me()); return; }
+    if (chipBtn) { app.chipSel = Number(chipBtn.dataset.chip); refreshBetting(); return; }
+    const spot = e.target.closest('[data-spot]');
+    if (spot && spot.dataset.spot && spot.classList.contains('click')) {
+      const s = app.state, m = me();
+      if (!s || s.phase !== 'betting' || !m || m.locked) return;
+      if (placeChip(spot.dataset.spot, app.chipSel)) {
+        refreshBetting();
+        const fresh = document.querySelector(`[data-spot="${spot.dataset.spot}"]`);
+        if (fresh) { fresh.classList.add('bump'); setTimeout(() => fresh.classList.remove('bump'), 350); }
+      } else { spot.classList.add('shake'); setTimeout(() => spot.classList.remove('shake'), 350); }
+      return;
+    }
     const b = e.target.closest('[data-act]');
-    if (b) onAct(b.dataset.act);
-  });
-  document.addEventListener('change', (e) => {
-    if (e.target.id === 'behind-target') { app.behindTarget = e.target.value; app.slot = 'behind'; renderActions(app.state, me()); }
+    if (b && !b.disabled) onAct(b.dataset.act, b);
   });
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input, select, textarea')) return;
-    const s = app.state; if (!s || s.phase !== 'playing' || !s.turn || s.turn.pid !== app.myId) return;
+    const s = app.state; if (!s) return;
     const k = e.key.toLowerCase();
-    const map = { h: 'hit', s: 'stand', d: 'double', p: 'split' };
-    if (map[k]) { const btn = document.querySelector(`[data-act="${map[k]}"]`); if (btn && !btn.disabled) onAct(map[k]); }
+    if (s.phase === 'playing' && s.turn && s.turn.pid === app.myId) {
+      const map = { h: 'hit', s: 'stand', d: 'double', p: 'split' };
+      if (map[k]) { const btn = document.querySelector(`[data-act="${map[k]}"]`); if (btn && !btn.disabled) onAct(map[k]); }
+    } else if (s.phase === 'betting') {
+      if (e.key === 'Enter') { const btn = document.querySelector('[data-act="lock"]'); if (btn && !btn.disabled) onAct('lock'); }
+      if (k === 'r') { const btn = document.querySelector('[data-act="repeat"]'); if (btn && !btn.disabled) onAct('repeat'); }
+      if (k === 'z' || e.key === 'Backspace') { const btn = document.querySelector('[data-act="undo"]'); if (btn && !btn.disabled) onAct('undo'); }
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-spot]')) { e.preventDefault(); e.target.click(); }
   });
   window.addEventListener('beforeunload', () => { if (app.role === 'guest') dispatch('leave'); if (app.host) app.host.broadcast({ type: 'kicked', reason: 'closed' }); });
-
-  // errors the host sends back to a guest (e.g. "Not enough chips")
   document.addEventListener('bj-toast', (e) => toast(e.detail));
 
   // ---------------- boot ----------------

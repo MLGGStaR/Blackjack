@@ -11,7 +11,9 @@ A casino-style blackjack site you play with friends. Fully static: one browser h
 - **Dealer Bust** side bet: pays 2 to 1 if the dealer busts with exactly three cards, 3 to 1 with four or more. Can be played on its own without a main bet.
 - **Bet behind** any other seat: your chips follow that player's main hand, including their doubles and splits when you can cover them.
 - Everyone chooses their own buy-in in the lobby with − / + (or by typing). Buy-ins lock when the host opens the table.
-- The counter at the top shows how far you are up or down, green or red. Every seat shows the same for its player.
+- Betting works like a real table: pick a chip from the rack, then tap your **BET** circle, the **DEALER BUST** spot, or a friend's circle to bet behind them. **Undo**, **Clear**, **Repeat** (same bets as last hand), **2×** and **All in** sit next to the rack. Enter deals, Backspace undoes, R repeats.
+- The bankroll panel top-left shows your chips and how far you are up or down this session, green or red. Every seat shows the same for its player.
+- Cards are dealt one at a time out of the shoe in casino order; the hole card flips before the dealer draws.
 - Lose everything and you can stay to watch or leave. Anyone can leave at any time.
 
 ## Run

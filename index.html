@@ -67,13 +67,20 @@
 <!-- ===== TABLE ===== -->
 <section id="screen-table" class="screen" hidden>
   <header class="topbar">
-    <div class="topbar-left">
-      <span class="room-pill"><span id="table-dot" class="dot"></span><span id="table-code">·····</span></span>
-      <span id="shoe-pill" class="shoe-pill" title="Cards left in the shoe"></span>
+    <div class="bank-panel" id="bank-panel">
+      <div class="bank-col">
+        <span class="bank-label">Bankroll</span>
+        <span id="bank" class="bank-amount">$0</span>
+      </div>
+      <div class="bank-col pnl-col">
+        <span class="bank-label">Session</span>
+        <span id="pnl" class="pnl flat">$0</span>
+      </div>
+      <span id="bank-sub" class="bank-sub"></span>
     </div>
     <div class="topbar-center">
-      <div id="pnl" class="pnl flat">$0</div>
-      <div id="pnl-sub" class="pnl-sub">Bankroll $0</div>
+      <span class="room-pill"><span id="table-dot" class="dot"></span><span id="table-code">·····</span></span>
+      <span id="shoe-pill" class="shoe-pill" title="Cards left in the shoe"></span>
     </div>
     <div class="topbar-right">
       <button id="btn-leave" class="btn ghost small">Leave table</button>
@@ -83,15 +90,24 @@
   <main class="table-area">
     <div class="rail">
       <div class="felt">
+        <div id="shoe-box" class="shoe-box" aria-hidden="true"></div>
         <div class="dealer-zone">
           <div class="dealer-label">Dealer</div>
           <div id="dealer-hand" class="hand dealer-hand"></div>
           <div id="dealer-value" class="hand-value"></div>
         </div>
 
-        <svg class="arc-text" viewBox="0 0 1000 220" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-          <defs><path id="arcPath" d="M 60 30 Q 500 250 940 30"></path></defs>
-          <text><textPath href="#arcPath" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2 · DEALER MUST STAND ON ALL 17s · INSURANCE PAYS 2 TO 1</textPath></text>
+        <svg class="arcs" viewBox="0 0 1000 250" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <path id="arcA" d="M 250 14 Q 500 150 750 14"></path>
+            <path id="arcB" d="M 130 30 Q 500 260 870 30"></path>
+            <path id="arcC" d="M 40 62 Q 500 350 960 62"></path>
+          </defs>
+          <text class="arc-a"><textPath href="#arcA" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
+          <use href="#arcB" class="band"></use>
+          <use href="#arcB" class="band-edge"></use>
+          <text class="arc-b"><textPath href="#arcB" startOffset="50%" text-anchor="middle">INSURANCE PAYS 2 TO 1</textPath></text>
+          <text class="arc-c"><textPath href="#arcC" startOffset="50%" text-anchor="middle">DEALER MUST STAND ON ALL 17s   ·   DEALER BUST PAYS 2 TO 1 ON 3 CARDS · 3 TO 1 ON 4 OR MORE</textPath></text>
         </svg>
 
         <div id="seats" class="seats"></div>
