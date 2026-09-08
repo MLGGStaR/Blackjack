@@ -23,5 +23,5 @@ Open `index.html` (or serve the folder) and click **Open a table**. Share the co
 ## Test
 
 ```
-node --test tests/
+node --test tests/engine.test.js
 ```
