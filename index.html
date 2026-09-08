@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Blackjack · Private Table</title>
+<meta name="description" content="Play 6-deck blackjack with friends. Open a table, share the code, set your own buy-in.">
+<meta name="theme-color" content="#0f0709">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230e4a36'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f3dc86' font-family='serif' font-weight='700'%3E21%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;0,6..96,700;1,6..96,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===== HOME ===== -->
+<section id="screen-home" class="screen">
+  <div class="home-wrap">
+    <div class="home-fan" aria-hidden="true">
+      <div class="card big" data-suit="♠"><span class="corner">A<i>♠</i></span><span class="pip">♠</span><span class="corner flip">A<i>♠</i></span></div>
+      <div class="card big" data-suit="♥"><span class="corner">K<i>♥</i></span><span class="pip">♥</span><span class="corner flip">K<i>♥</i></span></div>
+    </div>
+    <p class="eyebrow">Private table · 6-deck shoe</p>
+    <h1 class="brand">Blackjack</h1>
+    <p class="home-rules">Blackjack pays 3 to 2 · Dealer stands on all 17s · Insurance pays 2 to 1<br>Dealer Bust side bet 2 to 1 / 3 to 1 · Bet behind any seat</p>
+
+    <div class="home-panel">
+      <label class="field">
+        <span>Your name</span>
+        <input id="home-name" type="text" maxlength="16" placeholder="e.g. Khalid" autocomplete="nickname">
+      </label>
+      <div class="home-actions">
+        <button id="btn-host" class="btn gold">Open a table</button>
+        <div class="join-row">
+          <input id="home-code" type="text" maxlength="5" placeholder="ROOM CODE" autocapitalize="characters" autocomplete="off" spellcheck="false">
+          <button id="btn-join" class="btn">Join friends</button>
+        </div>
+      </div>
+      <p id="home-error" class="error" hidden></p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== LOBBY ===== -->
+<section id="screen-lobby" class="screen" hidden>
+  <div class="lobby-wrap">
+    <p class="eyebrow">Room code</p>
+    <div class="code-row">
+      <div id="lobby-code" class="room-code">·····</div>
+      <button id="btn-copy" class="btn small ghost">Copy</button>
+    </div>
+    <p id="lobby-status" class="status-line"><span class="dot"></span><span>Opening the room…</span></p>
+
+    <h2 class="lobby-title">Buy-ins</h2>
+    <p class="lobby-hint">Everyone sets their own chips. Locked once the table opens.</p>
+    <div id="lobby-players" class="lobby-players"></div>
+
+    <div class="lobby-actions">
+      <button id="btn-start" class="btn gold" hidden>Open the table</button>
+      <p id="lobby-wait" class="muted" hidden>Waiting for the host to open the table…</p>
+      <button id="btn-lobby-leave" class="btn ghost small">Leave</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== TABLE ===== -->
+<section id="screen-table" class="screen" hidden>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="room-pill"><span id="table-dot" class="dot"></span><span id="table-code">·····</span></span>
+      <span id="shoe-pill" class="shoe-pill" title="Cards left in the shoe"></span>
+    </div>
+    <div class="topbar-center">
+      <div id="pnl" class="pnl flat">$0</div>
+      <div id="pnl-sub" class="pnl-sub">Bankroll $0</div>
+    </div>
+    <div class="topbar-right">
+      <button id="btn-leave" class="btn ghost small">Leave table</button>
+    </div>
+  </header>
+
+  <main class="table-area">
+    <div class="rail">
+      <div class="felt">
+        <div class="dealer-zone">
+          <div class="dealer-label">Dealer</div>
+          <div id="dealer-hand" class="hand dealer-hand"></div>
+          <div id="dealer-value" class="hand-value"></div>
+        </div>
+
+        <svg class="arc-text" viewBox="0 0 1000 220" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+          <defs><path id="arcPath" d="M 60 30 Q 500 250 940 30"></path></defs>
+          <text><textPath href="#arcPath" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2 · DEALER MUST STAND ON ALL 17s · INSURANCE PAYS 2 TO 1</textPath></text>
+        </svg>
+
+        <div id="seats" class="seats"></div>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <h3>Table talk</h3>
+      <ul id="log" class="log"></ul>
+      <div id="spectators" class="spectators"></div>
+    </aside>
+  </main>
+
+  <footer id="actions" class="actions"></footer>
+  <div id="overlay" class="overlay" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+</section>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/net.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
